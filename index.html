@@ -2,81 +2,60 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>ジャンプゲーム</title>
+  <title>3Dゲーム雛形</title>
   <style>
-    body { text-align: center; font-family: sans-serif; }
-    #game { position: relative; width: 400px; height: 200px; background: #cce; margin: 0 auto; overflow: hidden; border: 2px solid #000; }
-    #player { position: absolute; bottom: 0; left: 50px; width: 30px; height: 30px; background: red; }
-    #obstacle { position: absolute; bottom: 0; right: 0; width: 20px; height: 40px; background: green; }
+    body { margin: 0; overflow: hidden; }
   </style>
 </head>
 <body>
-  <h1>ジャンプゲーム</h1>
-  <p>スペースキーでジャンプ！障害物に当たったらゲームオーバー</p>
-  <div id="game">
-    <div id="player"></div>
-    <div id="obstacle"></div>
-  </div>
-  <p id="score">スコア: 0</p>
-
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
   <script>
-    const player = document.getElementById("player");
-    const obstacle = document.getElementById("obstacle");
-    const scoreText = document.getElementById("score");
-    let score = 0;
-    let jumping = false;
-    let playerBottom = 0;
-    let gameOver = false;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // プレイヤーのキューブ
+    const geometry = new THREE.BoxGeometry(1,1,1);
+    const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const player = new THREE.Mesh(geometry, material);
+    scene.add(player);
+
+    // 障害物のキューブ
+    const obstacleGeo = new THREE.BoxGeometry(1,1,1);
+    const obstacleMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const obstacle = new THREE.Mesh(obstacleGeo, obstacleMat);
+    obstacle.position.set(5,0,0);
+    scene.add(obstacle);
+
+    camera.position.z = 5;
+
+    let playerPosX = 0;
 
     document.addEventListener("keydown", (e) => {
-      if (e.code === "Space" && !jumping) jump();
+      if (e.code === "ArrowLeft") playerPosX -= 0.2;
+      if (e.code === "ArrowRight") playerPosX += 0.2;
     });
 
-    function jump() {
-      jumping = true;
-      let upInterval = setInterval(() => {
-        if (playerBottom >= 100) { // ジャンプの高さ
-          clearInterval(upInterval);
-          let downInterval = setInterval(() => {
-            if (playerBottom <= 0) {
-              clearInterval(downInterval);
-              jumping = false;
-              playerBottom = 0;
-              player.style.bottom = playerBottom + "px";
-            } else {
-              playerBottom -= 5;
-              player.style.bottom = playerBottom + "px";
-            }
-          }, 20);
-        } else {
-          playerBottom += 5;
-          player.style.bottom = playerBottom + "px";
-        }
-      }, 20);
+    function animate() {
+      requestAnimationFrame(animate);
+      player.position.x = playerPosX;
+
+      // 障害物を動かす
+      obstacle.position.x -= 0.05;
+      if (obstacle.position.x < -5) obstacle.position.x = 5;
+
+      // 簡単な当たり判定
+      if (Math.abs(player.position.x - obstacle.position.x) < 0.5) {
+        console.log("衝突！");
+      }
+
+      renderer.render(scene, camera);
     }
 
-    function moveObstacle() {
-      let obstacleLeft = 400;
-      let move = setInterval(() => {
-        if (gameOver) { clearInterval(move); return; }
-        obstacleLeft -= 5;
-        obstacle.style.left = obstacleLeft + "px";
-
-        // 当たり判定
-        if (obstacleLeft < 80 && obstacleLeft > 50 && playerBottom < 40) {
-          gameOver = true;
-          alert("ゲームオーバー! スコア: " + score);
-        }
-
-        if (obstacleLeft <= -20) {
-          obstacleLeft = 400;
-          score++;
-          scoreText.textContent = "スコア: " + score;
-        }
-      }, 20);
-    }
-
-    moveObstacle();
+    animate();
   </script>
 </body>
 </html>
