@@ -2,60 +2,84 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>3Dゲーム雛形</title>
+  <title>3Dカーゲーム</title>
   <style>
     body { margin: 0; overflow: hidden; }
   </style>
 </head>
 <body>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-  <script>
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script>
+  // シーンとカメラ
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-    const renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+  // 地面
+  const groundGeo = new THREE.PlaneGeometry(20, 100);
+  const groundMat = new THREE.MeshBasicMaterial({ color: 0x555555 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.z = -50;
+  scene.add(ground);
 
-    // プレイヤーのキューブ
-    const geometry = new THREE.BoxGeometry(1,1,1);
-    const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-    const player = new THREE.Mesh(geometry, material);
-    scene.add(player);
+  // 車（プレイヤー）
+  const carGeo = new THREE.BoxGeometry(1,0.5,2);
+  const carMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+  const car = new THREE.Mesh(carGeo, carMat);
+  car.position.y = 0.25;
+  scene.add(car);
 
-    // 障害物のキューブ
-    const obstacleGeo = new THREE.BoxGeometry(1,1,1);
-    const obstacleMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    const obstacle = new THREE.Mesh(obstacleGeo, obstacleMat);
-    obstacle.position.set(5,0,0);
-    scene.add(obstacle);
+  // 障害物
+  const obsGeo = new THREE.BoxGeometry(1,0.5,1);
+  const obsMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+  const obstacles = [];
+  for(let i=0; i<5; i++){
+    const obs = new THREE.Mesh(obsGeo, obsMat);
+    obs.position.set(Math.random()*8-4, 0.25, -10 - i*10);
+    scene.add(obs);
+    obstacles.push(obs);
+  }
 
-    camera.position.z = 5;
+  camera.position.set(0,5,10);
+  camera.lookAt(0,0,0);
 
-    let playerPosX = 0;
+  let carPosX = 0;
 
-    document.addEventListener("keydown", (e) => {
-      if (e.code === "ArrowLeft") playerPosX -= 0.2;
-      if (e.code === "ArrowRight") playerPosX += 0.2;
-    });
+  document.addEventListener("keydown", (e) => {
+    if(e.code === "ArrowLeft") carPosX -= 0.5;
+    if(e.code === "ArrowRight") carPosX += 0.5;
+    carPosX = Math.max(Math.min(carPosX, 4), -4); // 左右制限
+  });
 
-    function animate() {
-      requestAnimationFrame(animate);
-      player.position.x = playerPosX;
+  function animate() {
+    requestAnimationFrame(animate);
 
-      // 障害物を動かす
-      obstacle.position.x -= 0.05;
-      if (obstacle.position.x < -5) obstacle.position.x = 5;
+    car.position.x = carPosX;
 
-      // 簡単な当たり判定
-      if (Math.abs(player.position.x - obstacle.position.x) < 0.5) {
-        console.log("衝突！");
+    // 地面と障害物を手前に動かす（車は固定）
+    ground.position.z += 0.1;
+    if(ground.position.z > 0) ground.position.z = -50;
+
+    obstacles.forEach(obs => {
+      obs.position.z += 0.1;
+      if(obs.position.z > 5) {
+        obs.position.z = -50;
+        obs.position.x = Math.random()*8-4;
       }
 
-      renderer.render(scene, camera);
-    }
+      // 当たり判定
+      if(Math.abs(car.position.x - obs.position.x) < 0.5 && Math.abs(obs.position.z) < 1){
+        console.log("衝突！");
+      }
+    });
 
-    animate();
-  </script>
+    renderer.render(scene, camera);
+  }
+
+  animate();
+</script>
 </body>
 </html>
