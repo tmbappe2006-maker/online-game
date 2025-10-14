@@ -2,31 +2,22 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>タイヨウの初めてのサイト</title>
-  <style>
-    body {
-      font-family: "Segoe UI", sans-serif;
-      background-color: #f0f8ff;
-      color: #333;
-      text-align: center;
-      padding: 50px;
-    }
-    h1 {
-      color: #ff4500;
-      font-size: 3em;
-    }
-    p {
-      font-size: 1.5em;
-    }
-    .highlight {
-      color: #1e90ff;
-      font-weight: bold;
-    }
-  </style>
+  <title>ボタンゲーム</title>
 </head>
 <body>
-  <h1>こんにちは！</h1>
-  <p>これはVS Codeで作った最初のWebサイトです。</p>
-  <p class="highlight">ここからどんどんサイトを作っていこう！</p>
+  <h1>ボタンを押してね！</h1>
+  <button id="btn">押す</button>
+  <p id="score">スコア: 0</p>
+
+  <script>
+    let score = 0;
+    const button = document.getElementById("btn");
+    const scoreText = document.getElementById("score");
+
+    button.addEventListener("click", () => {
+      score++;
+      scoreText.textContent = "スコア: " + score;
+    });
+  </script>
 </body>
 </html>
