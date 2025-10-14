@@ -1,81 +1,23 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <title>車ゲーム最小構成</title>
-  <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
-  </style>
-</head>
+<html>
 <body>
-  <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js';
+<h1>スイッチ共有</h1>
+<button id="btn">OFF</button>
 
-    // シーン・カメラ・レンダラー
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb); // 空色
+<script>
+const ws = new WebSocket('ws://localhost:8080');
+const btn = document.getElementById('btn');
 
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({antialias:true});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if(data.type === 'update') {
+    btn.textContent = data.state ? 'ON' : 'OFF';
+  }
+};
 
-    // 地面
-    const planeGeo = new THREE.PlaneGeometry(100, 100);
-    const planeMat = new THREE.MeshPhongMaterial({color:0x228B22});
-    const plane = new THREE.Mesh(planeGeo, planeMat);
-    plane.rotation.x = -Math.PI/2;
-    scene.add(plane);
-
-    // 車（箱）
-    const carGeo = new THREE.BoxGeometry(1, 0.5, 2);
-    const carMat = new THREE.MeshPhongMaterial({color:0xff0000});
-    const car = new THREE.Mesh(carGeo, carMat);
-    car.position.y = 0.25;
-    scene.add(car);
-
-    // 光源
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-    dirLight.position.set(5,10,5);
-    scene.add(dirLight);
-    scene.add(new THREE.AmbientLight(0x404040));
-
-    // カメラ位置
-    camera.position.set(0,5,10);
-    camera.lookAt(0,0,0);
-
-    // キー操作
-    const keys = {};
-    document.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
-    document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
-
-    // アニメーション
-    function animate() {
-      requestAnimationFrame(animate);
-
-      // 車操作
-      if(keys['w']) { 
-        car.position.x -= Math.sin(car.rotation.y)*0.1;
-        car.position.z -= Math.cos(car.rotation.y)*0.1;
-      }
-      if(keys['s']) { 
-        car.position.x += Math.sin(car.rotation.y)*0.1;
-        car.position.z += Math.cos(car.rotation.y)*0.1;
-      }
-      if(keys['a']) car.rotation.y += 0.05;
-      if(keys['d']) car.rotation.y -= 0.05;
-
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // リサイズ対応
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth/window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
+btn.addEventListener('click', () => {
+  ws.send(JSON.stringify({ type: 'toggle' }));
+});
+</script>
 </body>
 </html>
