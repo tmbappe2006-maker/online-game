@@ -1,75 +1,43 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>共有スイッチ</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align:center; padding:40px; }
-    #btn { font-size:24px; padding:12px 24px; }
-    #status { margin-top:12px; font-size:16px; color:#555; }
-  </style>
-</head>
+<head><meta charset="utf-8"><title>WS Debug</title></head>
 <body>
-  <h1>共有スイッチ</h1>
+  <h1>WS Debug</h1>
   <button id="btn" disabled>接続中...</button>
-  <div id="status">状態：—</div>
-
+  <div id="log"></div>
   <script>
-    // ← 自分の Render の URL（wss://...）に置き換えてある想定
-    const WS_URL = "wss://online-game-6wtl.onrender.com";
+    function log(...args){ console.log(...args); const d=document.getElementById('log'); d.innerText += args.map(a=>typeof a==='object'?JSON.stringify(a):a).join(' ') + "\\n"; }
+    const WS_URL = "wss://online-game-6wtl.onrender.com"; // ←あなたのURLならOK
+    log('Trying to connect to', WS_URL);
 
-    const statusEl = document.getElementById('status');
     const btn = document.getElementById('btn');
+    let socket = new WebSocket(WS_URL);
 
-    let socket;
-    function connect() {
-      socket = new WebSocket(WS_URL);
+    socket.addEventListener('open', () => {
+      log('OPEN');
+      btn.disabled = false;
+      btn.textContent = 'Toggle';
+    });
 
-      socket.addEventListener('open', () => {
-        console.log('WebSocket open');
-        statusEl.textContent = '状態：接続済み';
-        btn.disabled = false;
-        btn.textContent = '取得中...';
-      });
+    socket.addEventListener('message', (e) => {
+      log('MSG', e.data);
+    });
 
-      socket.addEventListener('message', (e) => {
-        console.log('received:', e.data);
-        try {
-          const data = JSON.parse(e.data);
-          // サーバーが送る形式に合わせる: { type: 'state', payload: { on: boolean } }
-          if (data.type === 'state' && data.payload) {
-            const isOn = !!data.payload.on;
-            btn.textContent = isOn ? 'Turn OFF' : 'Turn ON';
-            statusEl.textContent = '状態：' + (isOn ? 'ON' : 'OFF');
-          }
-        } catch (err) {
-          console.warn('parse error', err);
-        }
-      });
+    socket.addEventListener('close', (e) => {
+      log('CLOSE', e.code, e.reason);
+      btn.disabled = true;
+    });
 
-      socket.addEventListener('close', () => {
-        console.log('WebSocket closed');
-        statusEl.textContent = '状態：切断中... 再接続を試みます';
-        btn.disabled = true;
-        // 少し待って再接続
-        setTimeout(connect, 2000);
-      });
-
-      socket.addEventListener('error', (err) => {
-        console.error('WebSocket error', err);
-      });
-    }
-
-    // 最初に接続
-    connect();
+    socket.addEventListener('error', (err) => {
+      log('ERROR', err && err.message);
+    });
 
     btn.addEventListener('click', () => {
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        alert('まだ接続されていません');
-        return;
-      }
-      // サーバーは { type: 'toggle' } を受け取って状態を反転する仕様
-      socket.send(JSON.stringify({ type: 'toggle' }));
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        const msg = JSON.stringify({ type: 'toggle' });
+        log('SEND', msg);
+        socket.send(msg);
+      } else log('not open');
     });
   </script>
 </body>
