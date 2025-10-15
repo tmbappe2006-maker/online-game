@@ -5,7 +5,7 @@
 <button id="btn">OFF</button>
 
 <script>
-const ws = new WebSocket('ws://localhost:8080');
+const ws = new WebSocket('wss://online-game-6wtl.onrender.com');
 const btn = document.getElementById('btn');
 
 ws.onmessage = (event) => {
