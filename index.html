@@ -1,46 +1,69 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>スイッチ共有</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
-    #btn { font-size: 2rem; padding: 20px 40px; cursor: pointer; }
-  </style>
+<meta charset="UTF-8">
+<title>オンライン五目並べ</title>
+<style>
+  body { display: flex; justify-content: center; margin-top: 50px; font-family: sans-serif; }
+  #board { display: grid; grid-template-columns: repeat(15, 30px); grid-template-rows: repeat(15, 30px); gap: 1px; }
+  .cell { width: 30px; height: 30px; background: #f0d9b5; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
+</style>
 </head>
 <body>
-  <h1>スイッチ共有</h1>
-  <button id="btn">OFF</button>
-  <p id="log"></p>
+<div id="board"></div>
 
-  <script>
-    // Render の WebSocket サーバー URL に置き換える
-    const ws = new WebSocket('wss://online-game-6wtl.onrender.com');
-    const btn = document.getElementById('btn');
-    const log = document.getElementById('log');
+<!-- Socket.io の読み込み -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io(); // サーバーに接続
+</script>
 
-    ws.onopen = () => {
-      log.textContent = 'サーバーに接続しました';
-    };
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'state') {
-          btn.textContent = data.payload.on ? 'ON' : 'OFF';
-        }
-      } catch(e) {
-        console.error('メッセージ解析エラー', e);
-      }
-    };
+<!-- 自分の JavaScript -->
+<script>
+const socket = io("https://online-game-6wtl.onrender.com");  // Render の URL
 
-    ws.onclose = () => {
-      log.textContent = 'サーバーとの接続が切れました';
-    };
+const boardEl = document.getElementById('board');
+const size = 15;
+let board = Array.from({length: size}, () => Array(size).fill(null));
+let myTurn = false;
 
-    btn.addEventListener('click', () => {
-      ws.send(JSON.stringify({ type: 'toggle' }));
-    });
-  </script>
+// 盤面描画
+for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.x = x;
+        cell.dataset.y = y;
+        boardEl.appendChild(cell);
+        cell.addEventListener('click', () => {
+            if (!myTurn || board[y][x]) return;
+            board[y][x] = '●';
+            cell.textContent = '●';
+            myTurn = false;
+            socket.emit('move', { x, y });
+        });
+    }
+}
+
+// ゲーム開始
+socket.on('start', (data) => {
+    myTurn = data.yourTurn;
+    alert(myTurn ? "あなたの番です" : "相手の番です");
+});
+
+// 相手の手を反映
+socket.on('opponentMove', ({ x, y }) => {
+    board[y][x] = '○';
+    boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`).textContent = '○';
+    myTurn = true;
+});
+
+// 相手が切断したとき
+socket.on('opponentLeft', () => {
+    alert('相手が切断しました');
+});
+</script>
+
 </body>
 </html>

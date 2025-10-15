@@ -1,68 +1,33 @@
-const http = require('http');
 const express = require('express');
-const { WebSocketServer } = require('ws');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('WebSocket server is running');
-});
+app.use(express.static(__dirname)); // index.html を配信
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+let players = [];
 
-let state = { on: false };
+io.on('connection', (socket) => {
+    console.log('接続:', socket.id);
+    players.push(socket.id);
 
-function broadcast(obj) {
-  const msg = JSON.stringify(obj);
-  wss.clients.forEach((c) => {
-    if (c.readyState === 1) c.send(msg);
-  });
-}
-
-wss.on('connection', (ws, req) => {
-  const ip = req.socket.remoteAddress;
-  console.log(`[WS] New connection from ${ip}`);
-  // 送受信ログ
-  ws.send(JSON.stringify({ type: 'state', payload: state }));
-  ws.on('message', (raw) => {
-    console.log(`[WS] recv from ${ip}:`, raw.toString());
-    try {
-      const data = JSON.parse(raw);
-      if (data.type === 'toggle') {
-        state.on = !state.on;
-        console.log('[WS] state toggled ->', state);
-        broadcast({ type: 'state', payload: state });
-      }
-    } catch (e) {
-      console.log('[WS] parse error', e);
+    if (players.length >= 2) {
+        io.to(players[0]).emit('start', { yourTurn: true });
+        io.to(players[1]).emit('start', { yourTurn: false });
     }
-  });
 
-  ws.on('close', (code, reason) => {
-    console.log(`[WS] closed ${ip} code=${code} reason=${reason}`);
-  });
+    socket.on('move', (data) => {
+        socket.broadcast.emit('opponentMove', data);
+    });
 
-  ws.on('error', (err) => {
-    console.log(`[WS] error ${ip}:`, err && err.message);
-  });
-
-  // ping/pong
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
-});
-
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-wss.on('close', () => clearInterval(interval));
-
-server.listen(PORT, () => {
-  console.log('Listening on', PORT);
+    socket.on('disconnect', () => {
+        console.log('切断:', socket.id);
+        players = players.filter(id => id !== socket.id);
+        io.emit('opponentLeft');
+    });
 });

@@ -1,12 +1,12 @@
 {
-  "name": "online-game-ws",
+  "name": "gomoku-online",
   "version": "1.0.0",
-  "private": true,
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.8.1"
+  },
   "scripts": {
     "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^4.19.2",
-    "ws": "^8.18.0"
   }
 }
