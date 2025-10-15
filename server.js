@@ -21,25 +21,36 @@ function broadcast(obj) {
   });
 }
 
-wss.on('connection', (ws) => {
-  // 接続直後に現状を送る
+wss.on('connection', (ws, req) => {
+  const ip = req.socket.remoteAddress;
+  console.log(`[WS] New connection from ${ip}`);
+  // 送受信ログ
   ws.send(JSON.stringify({ type: 'state', payload: state }));
-
   ws.on('message', (raw) => {
+    console.log(`[WS] recv from ${ip}:`, raw.toString());
     try {
       const data = JSON.parse(raw);
       if (data.type === 'toggle') {
         state.on = !state.on;
+        console.log('[WS] state toggled ->', state);
         broadcast({ type: 'state', payload: state });
       }
     } catch (e) {
-      // 無視
+      console.log('[WS] parse error', e);
     }
   });
 
-  // ヘルスチェック（ping/pong）
+  ws.on('close', (code, reason) => {
+    console.log(`[WS] closed ${ip} code=${code} reason=${reason}`);
+  });
+
+  ws.on('error', (err) => {
+    console.log(`[WS] error ${ip}:`, err && err.message);
+  });
+
+  // ping/pong
   ws.isAlive = true;
-  ws.on('pong', () => (ws.isAlive = true));
+  ws.on('pong', () => { ws.isAlive = true; });
 });
 
 const interval = setInterval(() => {
