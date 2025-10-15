@@ -1,43 +1,45 @@
-<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>WS Debug</title></head>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>スイッチ共有</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+    #btn { font-size: 2rem; padding: 20px 40px; cursor: pointer; }
+  </style>
+</head>
 <body>
-  <h1>WS Debug</h1>
-  <button id="btn" disabled>接続中...</button>
-  <div id="log"></div>
+  <h1>スイッチ共有</h1>
+  <button id="btn">OFF</button>
+  <p id="log"></p>
+
   <script>
-    function log(...args){ console.log(...args); const d=document.getElementById('log'); d.innerText += args.map(a=>typeof a==='object'?JSON.stringify(a):a).join(' ') + "\\n"; }
-    const WS_URL = "wss://online-game-6wtl.onrender.com"; // ←あなたのURLならOK
-    log('Trying to connect to', WS_URL);
-
+    // Render の WebSocket サーバー URL に置き換える
+    const ws = new WebSocket('wss://online-game-6wtl.onrender.com');
     const btn = document.getElementById('btn');
-    let socket = new WebSocket(WS_URL);
+    const log = document.getElementById('log');
 
-    socket.addEventListener('open', () => {
-      log('OPEN');
-      btn.disabled = false;
-      btn.textContent = 'Toggle';
-    });
+    ws.onopen = () => {
+      log.textContent = 'サーバーに接続しました';
+    };
 
-    socket.addEventListener('message', (e) => {
-      log('MSG', e.data);
-    });
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'state') {
+          btn.textContent = data.payload.on ? 'ON' : 'OFF';
+        }
+      } catch(e) {
+        console.error('メッセージ解析エラー', e);
+      }
+    };
 
-    socket.addEventListener('close', (e) => {
-      log('CLOSE', e.code, e.reason);
-      btn.disabled = true;
-    });
-
-    socket.addEventListener('error', (err) => {
-      log('ERROR', err && err.message);
-    });
+    ws.onclose = () => {
+      log.textContent = 'サーバーとの接続が切れました';
+    };
 
     btn.addEventListener('click', () => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        const msg = JSON.stringify({ type: 'toggle' });
-        log('SEND', msg);
-        socket.send(msg);
-      } else log('not open');
+      ws.send(JSON.stringify({ type: 'toggle' }));
     });
   </script>
 </body>
