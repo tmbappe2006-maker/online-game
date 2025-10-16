@@ -90,11 +90,6 @@ socket.on('opponentMove', ({x,y})=>{
   messageEl.textContent = 'あなたの番です';
 });
 
-socket.on('opponentLeft', ()=>{
-  messageEl.textContent = '相手が退出しました';
-  controlsEl.style.display = 'none';
-  setTimeout(()=>location.reload(), 2000);
-});
 
 // 盤面初期化
 function initBoard(){
