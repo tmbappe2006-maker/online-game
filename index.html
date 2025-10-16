@@ -42,7 +42,7 @@ let myTurn = false;
 let board = [];
 let roomId = null;
 
-// ルーム表示
+// ルーム一覧を描画
 function renderRooms(rooms) {
   roomsEl.innerHTML = '';
   rooms.forEach(r => {
@@ -55,41 +55,49 @@ function renderRooms(rooms) {
   });
 }
 
+// 入室
 function joinRoom(id){
   socket.emit('joinRoom', id);
 }
 
 socket.on('updateRooms', renderRooms);
 socket.on('roomFull', ()=>alert('試合中です'));
+
+// 一人目が入った時
 socket.on('waitingOpponent', ()=>{
-  roomId = roomId; // 一人目
+  // roomId はサーバー側で保持されるが、クライアント側では特に使わない場合は不要
   roomsEl.style.display = 'none';
   gameEl.style.display = 'block';
   messageEl.textContent = '対戦相手が入室するのを待っています';
+  controlsEl.style.display = 'block';
+  // 試合中は再戦不要
+  rematchBtn.style.display = 'none';
+  leaveBtn.style.display = 'inline-block';
 });
+
+// ゲーム開始（先後はサーバーが決めて yourTurn で渡す）
 socket.on('startGame', data => {
   roomsEl.style.display = 'none';
   gameEl.style.display = 'block';
-  
-  // 盤面初期化
+
   initBoard();
-  
-  // ボタン制御
+
   controlsEl.style.display = 'block';
-  rematchBtn.style.display = 'none';  // 試合中は非表示
-  leaveBtn.style.display = 'inline-block'; // 退出は表示
+  rematchBtn.style.display = 'none';      // 試合中は非表示
+  leaveBtn.style.display = 'inline-block';
 
   myTurn = data.yourTurn;
   messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
 });
 
+// 相手の手
 socket.on('opponentMove', ({x,y})=>{
+  // 自分が直前に置いていない＝相手手番→相手石を置く
   board[y][x] = myTurn ? '○' : '●';
   renderBoard();
   myTurn = true;
   messageEl.textContent = 'あなたの番です';
 });
-
 
 // 盤面初期化
 function initBoard(){
@@ -125,27 +133,38 @@ function placeStone(x,y){
   socket.emit('move',{x,y});
 }
 
-// 再戦
+// 再戦（※勝敗後に使う想定。試合中は非表示のまま）
 rematchBtn.addEventListener('click', ()=>{
   socket.emit('rematch');
   messageEl.textContent='再戦リクエスト送信済み…相手を待っています';
 });
 
-// 退出
+// 退出（自分）
 leaveBtn.addEventListener('click', ()=>{
-  socket.emit('leaveRoom');
-  boardEl.style.display = 'none';       // 盤面非表示
+  socket.emit('leaveRoom');              // サーバーへ離脱通知
+  boardEl.style.display = 'none';
   messageEl.textContent = '退出しました';
 
-  // ルーム選択に戻るボタンを作る
+  // 「ルーム選択へ戻る」ボタンを出す（自動では戻らない）
   controlsEl.innerHTML = '';
   const backBtn = document.createElement('button');
   backBtn.textContent = 'ルーム選択に戻る';
-  backBtn.onclick = () => location.reload();
+  backBtn.onclick = () => {
+    gameEl.style.display = 'none';
+    roomsEl.style.display = 'flex';
+    controlsEl.style.display = 'none';
+    messageEl.textContent = '';
+    // サーバーからの updateRooms が届いていれば部屋一覧は更新済み
+  };
   controlsEl.appendChild(backBtn);
   controlsEl.style.display = 'block';
 });
+
+// 相手が退出した
 socket.on('opponentLeft', ()=>{
+  // ←ここが重要：退出された側もサーバーに自分が部屋から抜けることを通知
+  socket.emit('leaveRoom');
+
   boardEl.style.display = 'none';
   messageEl.textContent = '相手が退出しました';
 
@@ -153,17 +172,14 @@ socket.on('opponentLeft', ()=>{
   const backBtn = document.createElement('button');
   backBtn.textContent = 'ルーム選択に戻る';
   backBtn.onclick = () => {
-    // ここでルーム選択画面に戻す
     gameEl.style.display = 'none';
     roomsEl.style.display = 'flex';
     controlsEl.style.display = 'none';
+    messageEl.textContent = '';
   };
   controlsEl.appendChild(backBtn);
   controlsEl.style.display = 'block';
 });
-
-
-
 </script>
 </body>
 </html>
