@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>ルーム制五目並べ</title>
+<title>五目並べ</title>
 <style>
   body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 30px; }
   #rooms { display: flex; gap: 20px; margin-bottom: 20px; }
@@ -21,6 +21,15 @@
   #message { margin-top: 12px; min-height: 1.6em; }
   #controls { margin-top: 10px; display: none; gap: 8px; }
   button { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  .cell { position: relative; }              /* 擬似要素でリングを出すため */
+  .cell.last::after {
+    content: "";
+    position: absolute;
+    inset: 4px;                              /* リングの余白（好みで調整可） */
+    border: 2px solid #ff3b30;               /* 赤いリング（好みで色/太さ調整可） */
+    border-radius: 50%;
+    pointer-events: none;                    /* クリック判定に影響しない */
+  }
 </style>
 </head>
 <body>
