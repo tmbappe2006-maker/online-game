@@ -157,10 +157,16 @@ socket.on('opponentLeft', ()=>{
   controlsEl.innerHTML = '';
   const backBtn = document.createElement('button');
   backBtn.textContent = 'ルーム選択に戻る';
-  backBtn.onclick = () => location.reload();
+  backBtn.onclick = () => {
+    // ここでルーム選択画面に戻す
+    gameEl.style.display = 'none';
+    roomsEl.style.display = 'flex';
+    controlsEl.style.display = 'none';
+  };
   controlsEl.appendChild(backBtn);
   controlsEl.style.display = 'block';
 });
+
 
 
 </script>
