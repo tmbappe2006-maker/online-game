@@ -13,6 +13,7 @@
     display:flex; align-items:center; justify-content:center;
     border: 1px solid #000; box-sizing: border-box;
     cursor: pointer; user-select: none;
+    position: relative; /* ← リング描画用 */
   }
   .cell.disabled { cursor: not-allowed; opacity: .6; }
   .stone { width: 80%; height: 80%; border-radius: 50%; display: block; }
@@ -21,14 +22,15 @@
   #message { margin-top: 12px; min-height: 1.6em; }
   #controls { margin-top: 10px; display: none; gap: 8px; }
   button { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
-  .cell { position: relative; }              /* 擬似要素でリングを出すため */
+
+  /* 最後の手ハイライト（赤リング） */
   .cell.last::after {
     content: "";
     position: absolute;
-    inset: 4px;                              /* リングの余白（好みで調整可） */
-    border: 2px solid #ff3b30;               /* 赤いリング（好みで色/太さ調整可） */
+    inset: 4px;                 /* リングの余白 */
+    border: 2px solid #ff3b30;  /* リング色/太さは好みで調整可 */
     border-radius: 50%;
-    pointer-events: none;                    /* クリック判定に影響しない */
+    pointer-events: none;
   }
 </style>
 </head>
@@ -59,8 +61,9 @@ let myColor = null;   // 'black'|'white'
 let oppColor = null;
 let awaitingAck = false;
 let board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
+let lastMove = null;  // ★ 追加：最後の一手の座標を保持 {x,y}
 
-// ===== 共通UI：状況に応じて毎回作り直す =====
+// ===== コントロールUI =====
 function renderControlsInRoom() {
   controlsEl.innerHTML = '';
   const leaveBtn = document.createElement('button');
@@ -119,7 +122,6 @@ function renderRooms(rooms) {
                 : r.state === 'waiting' ? '相手待機中'
                 : '試合中';
     const disabled = r.state === 'playing' ? 'disabled' : '';
-
     const div = document.createElement('div');
     div.className = 'room';
     div.innerHTML = `
@@ -136,6 +138,7 @@ window.joinRoom = (id) => socket.emit('joinRoom', id);
 function initBoard(){
   board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
   awaitingAck = false;
+  lastMove = null;              // ★ 追加：ハイライト初期化
   boardEl.innerHTML = '';
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
@@ -162,6 +165,7 @@ function renderBoard(){
         s.className = `stone ${v}`;
         cell.appendChild(s);
       }
+      // 描画時には last クラスは触らない（setLast が制御）
     }
   }
 }
@@ -178,14 +182,25 @@ function refreshInteractivity(){
 
 function tryPlace(x, y){
   if (!myTurn || awaitingAck || board[y][x]) return;
-  // サーバー承認前に描画しない（同期ずれ防止）
-  awaitingAck = true;
+  awaitingAck = true;           // 承認待ち
   refreshInteractivity();
   socket.emit('play', { x, y });
 }
 
 function clearBoardUI() {
   boardEl.innerHTML = '';
+  lastMove = null;              // ★ 念のためUI側もリセット
+}
+
+// ★ 追加：最後の一手にハイライトを付ける
+function setLast(x, y) {
+  if (lastMove) {
+    const prev = boardEl.querySelector(`[data-x="${lastMove.x}"][data-y="${lastMove.y}"]`);
+    if (prev) prev.classList.remove('last');
+  }
+  const cur = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+  if (cur) cur.classList.add('last');
+  lastMove = { x, y };
 }
 
 // ===== ソケットイベント =====
@@ -217,6 +232,7 @@ socket.on('startGame', ({ yourTurn, yourColor }) => {
 socket.on('move', ({ x, y, color, nextTurn }) => {
   board[y][x] = color;
   renderBoard();
+  setLast(x, y);                 // ★ ここで最新手リング更新
   myTurn = (nextTurn === myColor);
   awaitingAck = false;
   refreshInteractivity();
@@ -224,7 +240,7 @@ socket.on('move', ({ x, y, color, nextTurn }) => {
 });
 
 // 勝敗
-socket.on('gameOver', ({ winnerColor, reason }) => {
+socket.on('gameOver', ({ winnerColor }) => {
   clearBoardUI();
   if (winnerColor === null) {
     messageEl.textContent = '引き分け';
