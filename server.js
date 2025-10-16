@@ -20,7 +20,10 @@ app.use(express.static(__dirname));
 io.on('connection', socket => {
   console.log('接続:', socket.id);
 
-  // 入室リクエスト
+  // 接続時にルーム情報を送信
+  socket.emit('updateRooms', rooms);
+
+  // 以降の処理はそのまま
   socket.on('joinRoom', roomId => {
     const room = rooms.find(r => r.id === roomId);
     if (!room) return;
