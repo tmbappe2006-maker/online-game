@@ -1,68 +1,246 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>オンライン五目並べ</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>オンライン五目並べ（改良版）</title>
 <style>
-  body { display: flex; justify-content: center; margin-top: 50px; font-family: sans-serif; }
-  #board { display: grid; grid-template-columns: repeat(15, 30px); grid-template-rows: repeat(15, 30px); gap: 1px; }
-  .cell { width: 30px; height: 30px; background: #f0d9b5; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
+  body { display:flex; flex-direction:column; align-items:center; font-family: system-ui, Arial, sans-serif; margin:20px; }
+  #status { margin-bottom:10px; }
+  #board { display: grid; grid-template-columns: repeat(15, 34px); grid-template-rows: repeat(15, 34px); gap: 0; }
+  .cell {
+    width:34px; height:34px; background:#f0d9b5;
+    display:flex; align-items:center; justify-content:center;
+    font-size:20px; cursor:pointer; user-select:none;
+    border: 1px solid #000; /* 黒い線 */
+    box-sizing: border-box;
+  }
+  .cell.disabled { cursor: not-allowed; opacity:0.6; }
+
+  .stone {
+    width:80%; height:80%; border-radius:50%; display:block;
+  }
+  .stone.black { background:#000; }
+  .stone.white {
+    background:#fff;
+    box-shadow: 0 0 0 1px #000 inset; /* 黒縁 */
+  }
+
+  #controls { margin-top:12px; display:flex; gap:8px; align-items:center; }
+  button { padding:6px 10px; border-radius:6px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+  #log { margin-top:12px; width:520px; max-width:90%; height:120px; overflow:auto; background:#fafafa; border:1px solid #eee; padding:8px; font-size:13px; }
 </style>
 </head>
 <body>
-<div id="board"></div>
+  <h2>オンライン五目並べ（改良版）</h2>
+  <div id="status">サーバーに接続中…</div>
 
-<!-- Socket.io の読み込み -->
+  <div id="controls">
+    <button id="findMatch">対戦する</button>
+    <div>あなた: <span id="mySymbol">—</span></div>
+    <div>ターン: <span id="turnDisplay">—</span></div>
+    <button id="requestRestart">再戦リクエスト</button>
+    <button id="leaveBtn">退出</button>
+  </div>
+
+  <div id="board" aria-label="gomoku board"></div>
+  <div id="log"></div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const socket = io(); // サーバーに接続
-</script>
+(() => {
+  const socket = io();
+  const size = 15;
+  const boardEl = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const mySymbolEl = document.getElementById('mySymbol');
+  const turnDisplay = document.getElementById('turnDisplay');
+  const logEl = document.getElementById('log');
+  const findMatchBtn = document.getElementById('findMatch');
+  const restartBtn = document.getElementById('requestRestart');
+  const leaveBtn = document.getElementById('leaveBtn');
 
+  let mySymbol = null; // 'black' or 'white'
+  let myTurn = false;
+  let roomId = null;
+  let localBoard = Array.from({length: size}, () => Array(size).fill(null));
+  let awaitingAck = false; // 送信中は操作ブロック
+  let matched = false;
 
-<!-- 自分の JavaScript -->
-<script>
+  function log(msg) {
+    const p = document.createElement('div');
+    p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.prepend(p);
+  }
 
-const boardEl = document.getElementById('board');
-const size = 15;
-let board = Array.from({length: size}, () => Array(size).fill(null));
-let myTurn = false;
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
 
-// 盤面描画
-for (let y = 0; y < size; y++) {
+  // 盤の初期化（DOM 作成）
+  for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-        const cell = document.createElement('div');
-        cell.className = 'cell';
-        cell.dataset.x = x;
-        cell.dataset.y = y;
-        boardEl.appendChild(cell);
-        cell.addEventListener('click', () => {
-            if (!myTurn || board[y][x]) return;
-            board[y][x] = '●';
-            cell.textContent = '●';
-            myTurn = false;
-            socket.emit('move', { x, y });
-        });
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.x = x;
+      cell.dataset.y = y;
+      cell.addEventListener('click', onCellClick);
+      boardEl.appendChild(cell);
     }
-}
+  }
 
-// ゲーム開始
-socket.on('start', (data) => {
-    myTurn = data.yourTurn;
-    alert(myTurn ? "あなたの番です" : "相手の番です");
-});
+  function refreshBoard() {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const cell = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        // clear
+        while (cell.firstChild) cell.removeChild(cell.firstChild);
+        const v = localBoard[y][x];
+        if (v === 'black' || v === 'white') {
+          const span = document.createElement('span');
+          span.className = `stone ${v}`;
+          cell.appendChild(span);
+        }
+        if (!myTurn || localBoard[y][x] || awaitingAck || !matched) {
+          cell.classList.add('disabled');
+        } else {
+          cell.classList.remove('disabled');
+        }
+      }
+    }
+    mySymbolEl.textContent = mySymbol ? (mySymbol === 'black' ? '黒（先手）' : '白（後手）') : '—';
+    turnDisplay.textContent = myTurn ? 'あなた' : '相手';
+  }
 
-// 相手の手を反映
-socket.on('opponentMove', ({ x, y }) => {
-    board[y][x] = '○';
-    boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`).textContent = '○';
-    myTurn = true;
-});
+  function onCellClick(e) {
+    if (!roomId) { alert('まだ対戦相手が確定していません'); return; }
+    if (!myTurn) return;
+    if (awaitingAck) return;
+    const x = parseInt(e.currentTarget.dataset.x, 10);
+    const y = parseInt(e.currentTarget.dataset.y, 10);
+    if (localBoard[y][x]) return;
 
-// 相手が切断したとき
-socket.on('opponentLeft', () => {
+    awaitingAck = true;
+    refreshBoard();
+    socket.emit('play', { roomId, x, y });
+    log(`手を送信: (${x}, ${y}) ...`);
+  }
+
+  // socket events
+  socket.on('connect', () => {
+    setStatus('サーバー接続済み。対戦ボタンを押してね。');
+    log('connected: ' + socket.id);
+  });
+
+  // user clicked 対戦する -> サーバーから待機メッセージ
+  socket.on('waitingForOpponent', () => {
+    setStatus('対戦相手を待っています...');
+    log('対戦相手を待っています');
+    matched = false;
+  });
+
+  // 後から押した人に送る（相手が待っていた）
+  socket.on('opponentWasWaiting', () => {
+    // 後から押した側へ一旦表示
+    alert('相手が対戦を待っています。対戦を開始します。');
+    log('相手が既に待機中だったためマッチングします');
+  });
+
+  socket.on('start', (data) => {
+    // data: { roomId, yourSymbol, yourTurn }
+    roomId = data.roomId;
+    mySymbol = data.yourSymbol; // 'black' or 'white'
+    myTurn = !!data.yourTurn;
+    localBoard = Array.from({length: size}, () => Array(size).fill(null));
+    awaitingAck = false;
+    matched = true;
+    setStatus(myTurn ? 'あなたの番です' : '相手の番です');
+    log(`対戦開始: 部屋 ${roomId} あなたは ${mySymbol}。${myTurn ? '先手' : '後手'}`);
+    refreshBoard();
+  });
+
+  // 合法手を全員に通知
+  socket.on('move', (data) => {
+    if (data.roomId !== roomId) return;
+    localBoard[data.y][data.x] = data.symbol; // 'black' or 'white'
+    myTurn = (data.nextTurn === mySymbol);
+    awaitingAck = false;
+    setStatus(myTurn ? 'あなたの番です' : '相手の番です');
+    refreshBoard();
+    log(`手を受信: (${data.x}, ${data.y}) = ${data.symbol}`);
+  });
+
+  socket.on('invalidMove', (reason) => {
+    awaitingAck = false;
+    refreshBoard();
+    log('サーバーが手を拒否: ' + (reason || '不正な手'));
+    if (reason) alert('無効な手です: ' + reason);
+  });
+
+  socket.on('gameOver', (data) => {
+    if (data.roomId !== roomId) return;
+    if (data.winnerSymbol === null) {
+      setStatus('引き分け');
+      alert('ゲーム終了：引き分けです');
+    } else if (data.winnerSymbol === mySymbol) {
+      setStatus('あなたの勝ち！');
+      alert('ゲーム終了：あなたの勝ち！');
+    } else {
+      setStatus('あなたの負け');
+      alert('ゲーム終了：あなたの負け');
+    }
+    myTurn = false;
+    awaitingAck = false;
+    matched = false; // 対戦終了
+    refreshBoard();
+    log('gameOver: ' + JSON.stringify(data));
+  });
+
+  socket.on('opponentLeft', () => {
+    setStatus('相手が切断しました');
     alert('相手が切断しました');
-});
-</script>
+    log('opponent left');
+    roomId = null;
+    myTurn = false;
+    mySymbol = null;
+    awaitingAck = false;
+    matched = false;
+    refreshBoard();
+  });
 
+  socket.on('message', (m) => { log('サーバー: ' + m); });
+
+  socket.on('disconnect', () => {
+    setStatus('サーバー切断');
+    log('disconnected');
+  });
+
+  // UI ボタン
+  findMatchBtn.addEventListener('click', () => {
+    socket.emit('findMatch');
+    log('対戦ボタンを押した（マッチング要求送信）');
+  });
+
+  restartBtn.addEventListener('click', () => {
+    if (!roomId) { alert('対戦中ではありません'); return; }
+    socket.emit('requestRestart', { roomId });
+    log('再戦リクエスト送信');
+  });
+
+  leaveBtn.addEventListener('click', () => {
+    socket.emit('leave');
+    log('退出リクエスト送信');
+    roomId = null;
+    mySymbol = null;
+    myTurn = false;
+    matched = false;
+    setStatus('退出しました');
+    refreshBoard();
+  });
+
+  // 初期表示
+  refreshBoard();
+})();
+</script>
 </body>
 </html>
