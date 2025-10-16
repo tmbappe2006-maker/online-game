@@ -31,9 +31,7 @@
 <div id="game" style="display:none">
   <div id="message"></div>
   <div id="board"></div>
-  <div id="controls">
-    <button id="leaveBtn">退出</button>
-  </div>
+  <div id="controls"></div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -45,15 +43,66 @@ const gameEl = document.getElementById('game');
 const boardEl = document.getElementById('board');
 const messageEl = document.getElementById('message');
 const controlsEl = document.getElementById('controls');
-const leaveBtn = document.getElementById('leaveBtn');
 
 const SIZE = 15;
 let myTurn = false;
-let myColor = null;
+let myColor = null;   // 'black'|'white'
 let oppColor = null;
+let awaitingAck = false;
 let board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
 
-// ルーム一覧
+// ===== 共通UI：状況に応じて毎回作り直す =====
+function renderControlsInRoom() {
+  controlsEl.innerHTML = '';
+  const leaveBtn = document.createElement('button');
+  leaveBtn.textContent = '退出';
+  leaveBtn.onclick = () => {
+    socket.emit('exitGame');
+    clearBoardUI();
+    messageEl.textContent = '退出しました';
+    renderControlsBackToLobby();
+  };
+  controlsEl.appendChild(leaveBtn);
+  controlsEl.style.display = 'flex';
+}
+
+function renderControlsPostGame() {
+  controlsEl.innerHTML = '';
+  const rematchBtn = document.createElement('button');
+  rematchBtn.textContent = '再戦リクエスト';
+  rematchBtn.onclick = () => {
+    socket.emit('rematchRequest');
+    messageEl.textContent = '再戦リクエスト送信…相手を待っています';
+    rematchBtn.disabled = true;
+  };
+  const leaveBtn = document.createElement('button');
+  leaveBtn.textContent = '退出';
+  leaveBtn.onclick = () => {
+    socket.emit('exitGame');
+    messageEl.textContent = '退出しました';
+    renderControlsBackToLobby();
+  };
+  controlsEl.appendChild(rematchBtn);
+  controlsEl.appendChild(leaveBtn);
+  controlsEl.style.display = 'flex';
+}
+
+function renderControlsBackToLobby() {
+  controlsEl.innerHTML = '';
+  const backBtn = document.createElement('button');
+  backBtn.textContent = 'ルーム選択に戻る';
+  backBtn.onclick = () => {
+    socket.emit('returnToLobby');
+    gameEl.style.display = 'none';
+    roomsEl.style.display = 'flex';
+    controlsEl.style.display = 'none';
+    messageEl.textContent = '';
+  };
+  controlsEl.appendChild(backBtn);
+  controlsEl.style.display = 'flex';
+}
+
+// ===== ルーム一覧 =====
 function renderRooms(rooms) {
   roomsEl.innerHTML = '';
   rooms.forEach(r => {
@@ -72,98 +121,30 @@ function renderRooms(rooms) {
     roomsEl.appendChild(div);
   });
 }
+window.joinRoom = (id) => socket.emit('joinRoom', id);
 
-window.joinRoom = (id) => {
-  socket.emit('joinRoom', id);
-};
-
-socket.on('updateRooms', renderRooms);
-socket.on('roomFull', () => alert('試合中です'));
-
-// 一人目が入室
-socket.on('waitingOpponent', () => {
-  roomsEl.style.display = 'none';
-  gameEl.style.display = 'block';
-  controlsEl.style.display = 'block';
-  messageEl.textContent = '対戦相手が入室するのを待っています';
-  // 盤面は startGame が来たタイミングで生成
-});
-
-// 試合開始（yourTurn: true が先手＝黒）
-socket.on('startGame', ({ yourTurn }) => {
-  roomsEl.style.display = 'none';
-  gameEl.style.display = 'block';
-  controlsEl.style.display = 'block';
-
-  myTurn = !!yourTurn;
-  myColor = myTurn ? 'black' : 'white';
-  oppColor = myTurn ? 'white' : 'black';
-
-  initBoard();
-  renderBoard();
-  messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
-});
-
-// 相手が退出（自動では戻さない）
-socket.on('opponentLeft', () => {
-  boardEl.innerHTML = '';
-  messageEl.textContent = '相手が退出しました';
-
-  // 「ルーム選択に戻る」ボタンを出す
-  controlsEl.innerHTML = '';
-  const backBtn = document.createElement('button');
-  backBtn.textContent = 'ルーム選択に戻る';
-  backBtn.onclick = () => {
-    socket.emit('returnToLobby');  // 自分が戻る瞬間にサーバーへ通知
-    gameEl.style.display = 'none';
-    roomsEl.style.display = 'flex';
-    controlsEl.style.display = 'none';
-    messageEl.textContent = '';
-  };
-  controlsEl.appendChild(backBtn);
-  controlsEl.style.display = 'block';
-});
-
-// 自分が退出（自動では戻さない）
-leaveBtn.addEventListener('click', () => {
-  socket.emit('exitGame');     // 相手に「相手が退出しました」を通知
-  boardEl.innerHTML = '';
-  messageEl.textContent = '退出しました';
-
-  controlsEl.innerHTML = '';
-  const backBtn = document.createElement('button');
-  backBtn.textContent = 'ルーム選択に戻る';
-  backBtn.onclick = () => {
-    socket.emit('returnToLobby'); // 自分が戻る瞬間にサーバーへ通知
-    gameEl.style.display = 'none';
-    roomsEl.style.display = 'flex';
-    controlsEl.style.display = 'none';
-    messageEl.textContent = '';
-  };
-  controlsEl.appendChild(backBtn);
-  controlsEl.style.display = 'block';
-});
-
-// --- 盤面まわり ---
+// ===== 盤面 =====
 function initBoard(){
   board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
+  awaitingAck = false;
   boardEl.innerHTML = '';
-  for(let y=0; y<SIZE; y++){
-    for(let x=0; x<SIZE; x++){
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
       const cell = document.createElement('div');
       cell.className = 'cell';
       cell.dataset.x = x;
       cell.dataset.y = y;
-      cell.addEventListener('click', () => placeStone(x, y));
+      cell.addEventListener('click', () => tryPlace(x, y));
       boardEl.appendChild(cell);
     }
   }
+  renderBoard();
   refreshInteractivity();
 }
 
 function renderBoard(){
-  for(let y=0; y<SIZE; y++){
-    for(let x=0; x<SIZE; x++){
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
       const cell = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
       while (cell.firstChild) cell.removeChild(cell.firstChild);
       const v = board[y][x];
@@ -177,31 +158,85 @@ function renderBoard(){
 }
 
 function refreshInteractivity(){
-  for(let y=0; y<SIZE; y++){
-    for(let x=0; x<SIZE; x++){
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
       const cell = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-      if (!myTurn || board[y][x]) cell.classList.add('disabled');
+      if (!myTurn || board[y][x] || awaitingAck) cell.classList.add('disabled');
       else cell.classList.remove('disabled');
     }
   }
 }
 
-function placeStone(x, y){
-  if (!myTurn || board[y][x]) return;
-  board[y][x] = myColor;
-  renderBoard();
-  myTurn = false;
+function tryPlace(x, y){
+  if (!myTurn || awaitingAck || board[y][x]) return;
+  // サーバー承認前に描画しない（同期ずれ防止）
+  awaitingAck = true;
   refreshInteractivity();
-  messageEl.textContent = '相手の番です';
-  socket.emit('move', { x, y });
+  socket.emit('play', { x, y });
 }
 
-socket.on('opponentMove', ({ x, y }) => {
-  board[y][x] = oppColor;
+function clearBoardUI() {
+  boardEl.innerHTML = '';
+}
+
+// ===== ソケットイベント =====
+socket.on('updateRooms', renderRooms);
+socket.on('roomFull', () => alert('試合中です'));
+
+socket.on('waitingOpponent', () => {
+  roomsEl.style.display = 'none';
+  gameEl.style.display = 'block';
+  messageEl.textContent = '対戦相手が入室するのを待っています';
+  renderControlsInRoom(); // 入室のたびに初期化
+  // 盤面は startGame が来てから
+});
+
+socket.on('startGame', ({ yourTurn, yourColor }) => {
+  roomsEl.style.display = 'none';
+  gameEl.style.display = 'block';
+
+  myTurn = !!yourTurn;
+  myColor = yourColor;
+  oppColor = (myColor === 'black') ? 'white' : 'black';
+
+  initBoard();
+  messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
+  renderControlsInRoom(); // 入室/開戦時に毎回初期化
+});
+
+// サーバー正規の手通知（自分/相手ともにこのイベントで盤を更新）
+socket.on('move', ({ x, y, color, nextTurn }) => {
+  board[y][x] = color;
   renderBoard();
-  myTurn = true;
+  myTurn = (nextTurn === myColor);
+  awaitingAck = false;
   refreshInteractivity();
-  messageEl.textContent = 'あなたの番です';
+  messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
+});
+
+// 勝敗
+socket.on('gameOver', ({ winnerColor, reason }) => {
+  clearBoardUI();
+  if (winnerColor === null) {
+    messageEl.textContent = '引き分け';
+  } else {
+    messageEl.textContent = (winnerColor === myColor) ? 'あなたの勝ち！' : 'あなたの負け';
+  }
+  renderControlsPostGame(); // 再戦リクエスト & 退出
+});
+
+// 相手が再戦待機中（自分はまだ押していない）
+socket.on('opponentRematchWaiting', () => {
+  if (!/再戦/.test(messageEl.textContent)) {
+    messageEl.textContent += (messageEl.textContent ? ' / ' : '') + '相手が再戦待機中';
+  }
+});
+
+// 相手が退出（自動では戻さない）
+socket.on('opponentLeft', () => {
+  clearBoardUI();
+  messageEl.textContent = '相手が退出しました';
+  renderControlsBackToLobby();
 });
 </script>
 </body>
