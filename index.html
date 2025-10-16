@@ -67,12 +67,19 @@ socket.on('waitingOpponent', ()=>{
   gameEl.style.display = 'block';
   messageEl.textContent = '対戦相手が入室するのを待っています';
 });
-socket.on('startGame', data=>{
+socket.on('startGame', data => {
   roomsEl.style.display = 'none';
   gameEl.style.display = 'block';
-  controlsEl.style.display = 'block';
-  myTurn = data.yourTurn;
+  
+  // 盤面初期化
   initBoard();
+  
+  // ボタン制御
+  controlsEl.style.display = 'block';
+  rematchBtn.style.display = 'none';  // 試合中は非表示
+  leaveBtn.style.display = 'inline-block'; // 退出は表示
+
+  myTurn = data.yourTurn;
   messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
 });
 
@@ -132,8 +139,29 @@ rematchBtn.addEventListener('click', ()=>{
 // 退出
 leaveBtn.addEventListener('click', ()=>{
   socket.emit('leaveRoom');
-  location.reload();
+  boardEl.style.display = 'none';       // 盤面非表示
+  messageEl.textContent = '退出しました';
+
+  // ルーム選択に戻るボタンを作る
+  controlsEl.innerHTML = '';
+  const backBtn = document.createElement('button');
+  backBtn.textContent = 'ルーム選択に戻る';
+  backBtn.onclick = () => location.reload();
+  controlsEl.appendChild(backBtn);
+  controlsEl.style.display = 'block';
 });
+socket.on('opponentLeft', ()=>{
+  boardEl.style.display = 'none';
+  messageEl.textContent = '相手が退出しました';
+
+  controlsEl.innerHTML = '';
+  const backBtn = document.createElement('button');
+  backBtn.textContent = 'ルーム選択に戻る';
+  backBtn.onclick = () => location.reload();
+  controlsEl.appendChild(backBtn);
+  controlsEl.style.display = 'block';
+});
+
 
 </script>
 </body>
