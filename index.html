@@ -1,268 +1,213 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>五目並べ</title>
-<style>
-  body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 30px; }
-  #rooms { display: flex; gap: 20px; margin-bottom: 20px; }
-  .room { border: 1px solid #333; padding: 10px; width: 160px; text-align: center; }
-  #board { display: grid; grid-template-columns: repeat(15, 30px); grid-template-rows: repeat(15, 30px); gap: 0; margin-top: 10px; }
-  .cell {
-    width: 30px; height: 30px; background: #f0d9b5;
-    display:flex; align-items:center; justify-content:center;
-    border: 1px solid #000; box-sizing: border-box;
-    cursor: pointer; user-select: none;
-    position: relative; /* ← リング描画用 */
-  }
-  .cell.disabled { cursor: not-allowed; opacity: .6; }
-  .stone { width: 80%; height: 80%; border-radius: 50%; display: block; }
-  .stone.black { background: #000; }
-  .stone.white { background: #fff; box-shadow: inset 0 0 0 1px #000; }
-  #message { margin-top: 12px; min-height: 1.6em; }
-  #controls { margin-top: 10px; display: none; gap: 8px; }
-  button { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
-
-  /* 最後の手ハイライト（赤リング） */
-  .cell.last::after {
-    content: "";
-    position: absolute;
-    inset: 4px;                 /* リングの余白 */
-    border: 2px solid #ff3b30;  /* リング色/太さは好みで調整可 */
-    border-radius: 50%;
-    pointer-events: none;
-  }
-</style>
+  <meta charset="utf-8" />
+  <title>Car Soccer Online MVP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html,body { margin:0; height:100%; background:#111; overflow:hidden; }
+    #hud {
+      position:fixed; left:12px; top:10px;
+      color:#fff; font:14px/1.4 sans-serif;
+      z-index:10;
+    }
+  </style>
 </head>
 <body>
+<div id="hud">接続中...</div>
 
-<h2>ルーム選択</h2>
-<div id="rooms"></div>
-
-<div id="game" style="display:none">
-  <div id="message"></div>
-  <div id="board"></div>
-  <div id="controls"></div>
-</div>
-
+<!-- Socket.IO -->
 <script src="/socket.io/socket.io.js"></script>
-<script>
-const socket = io();
 
-const roomsEl = document.getElementById('rooms');
-const gameEl = document.getElementById('game');
-const boardEl = document.getElementById('board');
-const messageEl = document.getElementById('message');
-const controlsEl = document.getElementById('controls');
+<script type="module">
+  import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+  import * as CANNON from 'https://cdn.skypack.dev/cannon-es';
 
-const SIZE = 15;
-let myTurn = false;
-let myColor = null;   // 'black'|'white'
-let oppColor = null;
-let awaitingAck = false;
-let board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
-let lastMove = null;  // ★ 追加：最後の一手の座標を保持 {x,y}
+  // ======== Three.js 基本設定 ========
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x101418);
 
-// ===== コントロールUI =====
-function renderControlsInRoom() {
-  controlsEl.innerHTML = '';
-  const leaveBtn = document.createElement('button');
-  leaveBtn.textContent = '退出';
-  leaveBtn.onclick = () => {
-    socket.emit('exitGame');
-    clearBoardUI();
-    messageEl.textContent = '退出しました';
-    renderControlsBackToLobby();
-  };
-  controlsEl.appendChild(leaveBtn);
-  controlsEl.style.display = 'flex';
-}
+  const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 1000);
+  camera.position.set(0, 10, 18);
 
-function renderControlsPostGame() {
-  controlsEl.innerHTML = '';
-  const rematchBtn = document.createElement('button');
-  rematchBtn.textContent = '再戦リクエスト';
-  rematchBtn.onclick = () => {
-    socket.emit('rematchRequest');
-    messageEl.textContent = '再戦リクエスト送信…相手を待っています';
-    rematchBtn.disabled = true;
-  };
-  const leaveBtn = document.createElement('button');
-  leaveBtn.textContent = '退出';
-  leaveBtn.onclick = () => {
-    socket.emit('exitGame');
-    messageEl.textContent = '退出しました';
-    renderControlsBackToLobby();
-  };
-  controlsEl.appendChild(rematchBtn);
-  controlsEl.appendChild(leaveBtn);
-  controlsEl.style.display = 'flex';
-}
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-function renderControlsBackToLobby() {
-  controlsEl.innerHTML = '';
-  const backBtn = document.createElement('button');
-  backBtn.textContent = 'ルーム選択に戻る';
-  backBtn.onclick = () => {
-    socket.emit('returnToLobby');
-    gameEl.style.display = 'none';
-    roomsEl.style.display = 'flex';
-    controlsEl.style.display = 'none';
-    messageEl.textContent = '';
-  };
-  controlsEl.appendChild(backBtn);
-  controlsEl.style.display = 'flex';
-}
+  const light = new THREE.DirectionalLight(0xffffff, 1.2);
+  light.position.set(10,20,10);
+  scene.add(light, new THREE.AmbientLight(0xffffff, 0.25));
 
-// ===== ルーム一覧 =====
-function renderRooms(rooms) {
-  roomsEl.innerHTML = '';
-  rooms.forEach(r => {
-    const label = r.state === 'empty' ? '空き'
-                : r.state === 'waiting' ? '相手待機中'
-                : '試合中';
-    const disabled = r.state === 'playing' ? 'disabled' : '';
-    const div = document.createElement('div');
-    div.className = 'room';
-    div.innerHTML = `
-      <div><strong>ルーム${r.id}</strong></div>
-      <div style="margin:6px 0">${label}</div>
-      <button ${disabled} onclick="joinRoom(${r.id})">入室</button>
-    `;
-    roomsEl.appendChild(div);
+  const hud = document.getElementById('hud');
+
+  // ======== フィールド ========
+  const FIELD_W = 60, FIELD_L = 36;
+
+  function wall(x,y,z,sx,sy,sz,c=0x20303a){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),
+      new THREE.MeshStandardMaterial({color:c}));
+    m.position.set(x,y,z); scene.add(m);
+    return m;
+  }
+  wall(0,-0.5,0, FIELD_W,1,FIELD_L, 0x1e2a33);
+  wall(0,4,-FIELD_L/2, FIELD_W,8,1);
+  wall(0,4, FIELD_L/2, FIELD_W,8,1);
+  wall(-FIELD_W/2,4,0, 1,8,FIELD_L);
+  wall( FIELD_W/2,4,0, 1,8,FIELD_L);
+
+  const GOAL_W=14, GOAL_H=5, GOAL_D=2;
+  const goalBlue = wall(0,GOAL_H/2,-FIELD_L/2+GOAL_D/2+0.5,GOAL_W,GOAL_H,GOAL_D,0x2244ff);
+  goalBlue.material.transparent=true; goalBlue.material.opacity=0.15;
+  const goalOrange = wall(0,GOAL_H/2,FIELD_L/2-GOAL_D/2-0.5,GOAL_W,GOAL_H,GOAL_D,0xff7a22);
+  goalOrange.material.transparent=true; goalOrange.material.opacity=0.15;
+
+  // ======== プレイヤー（自分） ========
+  const carMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(2.2,1.0,3.2),
+    new THREE.MeshStandardMaterial({color:0x66ccff})
+  );
+  scene.add(carMesh);
+
+  // 物理設定（自分の車のみローカル）
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0,-9.82,0) });
+  const matGround = new CANNON.Material("ground");
+  const matCar = new CANNON.Material("car");
+  world.addContactMaterial(new CANNON.ContactMaterial(matGround, matCar, { friction:0.6, restitution:0 }));
+
+  const ground = new CANNON.Body({ type: CANNON.Body.STATIC });
+  ground.addShape(new CANNON.Box(new CANNON.Vec3(FIELD_W/2,0.5,FIELD_L/2)));
+  ground.position.set(0,-0.5,0);
+  world.addBody(ground);
+
+  const carBody = new CANNON.Body({
+    mass:1200, material:matCar,
+    shape:new CANNON.Box(new CANNON.Vec3(1.1,0.5,1.6)),
+    angularDamping:0.8, linearDamping:0.05
   });
-}
-window.joinRoom = (id) => socket.emit('joinRoom', id);
+  carBody.position.set(0,1.2,12);
+  carBody.shapeOffsets[0].y -= 0.3;
+  world.addBody(carBody);
 
-// ===== 盤面 =====
-function initBoard(){
-  board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
-  awaitingAck = false;
-  lastMove = null;              // ★ 追加：ハイライト初期化
-  boardEl.innerHTML = '';
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      cell.dataset.x = x;
-      cell.dataset.y = y;
-      cell.addEventListener('click', () => tryPlace(x, y));
-      boardEl.appendChild(cell);
+  // ======== ボール（サーバ同期） ========
+  const ballMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2,24,16),
+    new THREE.MeshStandardMaterial({color:0xffffff})
+  );
+  scene.add(ballMesh);
+  let serverBall = { p:{x:0,y:2,z:0}, v:{x:0,y:0,z:0} };
+
+  // ======== ネットワーク ========
+  const socket = io(); // 同一オリジン
+  let myId=null, myTeam="blue", score={blue:0,orange:0};
+
+  const others = new Map(); // 他プレイヤー
+  function getOrCreateOther(id,team){
+    if(others.has(id)) return others.get(id);
+    const color=(team==="blue")?0x3366ff:0xff9933;
+    const m=new THREE.Mesh(new THREE.BoxGeometry(2.2,1.0,3.2),
+      new THREE.MeshStandardMaterial({color}));
+    scene.add(m);
+    const o={mesh:m,last:{x:0,y:1.2,z:0,qy:0}};
+    others.set(id,o); return o;
+  }
+  function removeOther(id){
+    const o=others.get(id); if(!o)return;
+    scene.remove(o.mesh); others.delete(id);
+  }
+
+  socket.on("hello", d=>{
+    myId=d.id; myTeam=d.team; score=d.scores; serverBall=d.ball;
+    hud.textContent=`Blue ${score.blue}:${score.orange} Orange （あなた:${myTeam}）`;
+  });
+  socket.on("players", list=>{
+    const ids=new Set(Object.keys(list));
+    for(const [id,p] of Object.entries(list)){
+      if(id===myId)continue;
+      const o=getOrCreateOther(id,p.team);
+      o.last=p;
     }
-  }
-  renderBoard();
-  refreshInteractivity();
-}
-
-function renderBoard(){
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const cell = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-      while (cell.firstChild) cell.removeChild(cell.firstChild);
-      const v = board[y][x];
-      if (v) {
-        const s = document.createElement('span');
-        s.className = `stone ${v}`;
-        cell.appendChild(s);
-      }
-      // 描画時には last クラスは触らない（setLast が制御）
+    for(const id of Array.from(others.keys())){
+      if(!ids.has(id))removeOther(id);
     }
-  }
-}
-
-function refreshInteractivity(){
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const cell = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-      if (!myTurn || board[y][x] || awaitingAck) cell.classList.add('disabled');
-      else cell.classList.remove('disabled');
+  });
+  socket.on("state", st=>{
+    serverBall=st.ball;
+    for(const [id,p] of Object.entries(st.players)){
+      if(id===myId)continue;
+      const o=getOrCreateOther(id,p.team);
+      o.last=p;
     }
+  });
+  socket.on("score", s=>{
+    score=s;
+    hud.textContent=`Blue ${score.blue}:${score.orange} Orange （あなた:${myTeam}）`;
+  });
+
+  // 20Hzで自分の姿勢送信
+  setInterval(()=>{
+    const e=new THREE.Euler().setFromQuaternion(carMesh.quaternion,"YXZ");
+    socket.emit("pose",{x:carMesh.position.x,y:carMesh.position.y,z:carMesh.position.z,qy:e.y});
+  },50);
+
+  // ======== 入力 ========
+  const keys=new Set();
+  addEventListener("keydown",e=>keys.add(e.code));
+  addEventListener("keyup",e=>keys.delete(e.code));
+
+  function followCamera(){
+    const carPos=carMesh.position.clone();
+    const back=new THREE.Vector3(0,0,-1).applyQuaternion(carMesh.quaternion).multiplyScalar(8);
+    const up=new THREE.Vector3(0,4.5,0);
+    const desired=carPos.clone().add(back).add(up);
+    camera.position.lerp(desired,0.12);
+    camera.lookAt(carPos.clone().add(new THREE.Vector3(0,1,0)));
   }
-}
 
-function tryPlace(x, y){
-  if (!myTurn || awaitingAck || board[y][x]) return;
-  awaitingAck = true;           // 承認待ち
-  refreshInteractivity();
-  socket.emit('play', { x, y });
-}
+  // ======== メインループ ========
+  const dt=1/60;
+  function tick(){
+    // 自分の車を動かす
+    const fwd=new CANNON.Vec3(0,0,1);
+    carBody.vectorToWorldFrame(fwd,fwd);
+    const max=28, acc=8000, rev=6000, turn=300, jmp=6000, bst=12000;
+    const vel=carBody.velocity.dot(fwd);
+    const gnd=Math.abs(carBody.position.y-1.2)<0.3;
 
-function clearBoardUI() {
-  boardEl.innerHTML = '';
-  lastMove = null;              // ★ 念のためUI側もリセット
-}
+    if(keys.has("KeyW")||keys.has("ArrowUp"))   if(vel<max) carBody.applyForce(fwd.scale(acc*dt),carBody.position);
+    if(keys.has("KeyS")||keys.has("ArrowDown")) if(vel>-max*0.5) carBody.applyForce(fwd.scale(-rev*dt),carBody.position);
+    if(keys.has("KeyA")||keys.has("ArrowLeft"))  carBody.torque.y+=(gnd?turn:turn*0.4)*dt;
+    if(keys.has("KeyD")||keys.has("ArrowRight")) carBody.torque.y-=(gnd?turn:turn*0.4)*dt;
+    if(keys.has("Space")&&gnd) carBody.applyImpulse(new CANNON.Vec3(0,jmp*dt,0));
+    if(keys.has("ShiftLeft")) carBody.applyForce(fwd.scale(bst*dt),carBody.position);
 
-// ★ 追加：最後の一手にハイライトを付ける
-function setLast(x, y) {
-  if (lastMove) {
-    const prev = boardEl.querySelector(`[data-x="${lastMove.x}"][data-y="${lastMove.y}"]`);
-    if (prev) prev.classList.remove('last');
+    world.step(dt);
+    carMesh.position.copy(carBody.position);
+    carMesh.quaternion.copy(carBody.quaternion);
+
+    // 他プレイヤー補間
+    for(const [id,o] of others){
+      const t=o.last;
+      o.mesh.position.lerp(new THREE.Vector3(t.x,t.y,t.z),0.25);
+      const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,t.qy,0));
+      o.mesh.quaternion.slerp(q,0.25);
+    }
+
+    // サーバボール補間
+    const tgt=new THREE.Vector3(serverBall.p.x,serverBall.p.y,serverBall.p.z);
+    ballMesh.position.lerp(tgt,0.35);
+
+    followCamera();
+    renderer.render(scene,camera);
+    requestAnimationFrame(tick);
   }
-  const cur = boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-  if (cur) cur.classList.add('last');
-  lastMove = { x, y };
-}
 
-// ===== ソケットイベント =====
-socket.on('updateRooms', renderRooms);
-socket.on('roomFull', () => alert('試合中です'));
+  addEventListener("resize",()=>{
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
 
-socket.on('waitingOpponent', () => {
-  roomsEl.style.display = 'none';
-  gameEl.style.display = 'block';
-  messageEl.textContent = '対戦相手が入室するのを待っています';
-  renderControlsInRoom(); // 入室のたびに初期化
-  // 盤面は startGame が来てから
-});
-
-socket.on('startGame', ({ yourTurn, yourColor }) => {
-  roomsEl.style.display = 'none';
-  gameEl.style.display = 'block';
-
-  myTurn = !!yourTurn;
-  myColor = yourColor;
-  oppColor = (myColor === 'black') ? 'white' : 'black';
-
-  initBoard();
-  messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
-  renderControlsInRoom(); // 入室/開戦時に毎回初期化
-});
-
-// サーバー正規の手通知（自分/相手ともにこのイベントで盤を更新）
-socket.on('move', ({ x, y, color, nextTurn }) => {
-  board[y][x] = color;
-  renderBoard();
-  setLast(x, y);                 // ★ ここで最新手リング更新
-  myTurn = (nextTurn === myColor);
-  awaitingAck = false;
-  refreshInteractivity();
-  messageEl.textContent = myTurn ? 'あなたの番です' : '相手の番です';
-});
-
-// 勝敗
-socket.on('gameOver', ({ winnerColor }) => {
-  clearBoardUI();
-  if (winnerColor === null) {
-    messageEl.textContent = '引き分け';
-  } else {
-    messageEl.textContent = (winnerColor === myColor) ? 'あなたの勝ち！' : 'あなたの負け';
-  }
-  renderControlsPostGame(); // 再戦リクエスト & 退出
-});
-
-// 相手が再戦待機中（自分はまだ押していない）
-socket.on('opponentRematchWaiting', () => {
-  if (!/再戦/.test(messageEl.textContent)) {
-    messageEl.textContent += (messageEl.textContent ? ' / ' : '') + '相手が再戦待機中';
-  }
-});
-
-// 相手が退出（自動では戻さない）
-socket.on('opponentLeft', () => {
-  clearBoardUI();
-  messageEl.textContent = '相手が退出しました';
-  renderControlsBackToLobby();
-});
+  tick();
 </script>
 </body>
 </html>

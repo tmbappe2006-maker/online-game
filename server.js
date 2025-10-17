@@ -1,252 +1,174 @@
-// server.js
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import { fileURLToPath } from "url";
+import path from "path";
+import * as CANNON from "cannon-es";
 
+// __dirname の再構築
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// =======================
+// Express サーバー設定
+// =======================
 const app = express();
+app.use(express.static(__dirname)); // index.htmlなどを配信
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*", methods: ["GET","POST"] } });
+const io = new Server(server, { cors: { origin: "*" } });
 
-const PORT = process.env.PORT || 3000;
+// =======================
+// 物理ワールド設定
+// =======================
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+world.solver.iterations = 12;
+world.solver.tolerance = 0.001;
 
-app.use(express.static(__dirname));
-app.get('/_health', (_, res) => res.send('OK'));
+const FIELD_W = 60, FIELD_L = 36, WALL_H = 8;
 
-// 3部屋：locked = 二人で開始後は両者がロビーへ戻るまで「試合中」ロック
-const rooms = [
-  { id: 1, players: [], locked: false },
-  { id: 2, players: [], locked: false },
-  { id: 3, players: [], locked: false }
-];
-
-// ゲーム状態: roomId -> { board, colorMap:{sid:'black'|'white'}, turn:'black'|'white', inProgress, rematch:Set<sid> }
-const games = new Map();
-
-io.on('connection', (socket) => {
-  emitRooms();
-
-  socket.on('joinRoom', (roomId) => {
-    const room = rooms.find(r => r.id === roomId);
-    if (!room) return;
-
-    // locked の部屋は途中参戦不可（1人でも入れない）
-    if (room.locked || room.players.length >= 2) {
-      socket.emit('roomFull');
-      return;
-    }
-
-    // 入室
-    room.players = room.players.filter(p => p !== socket.id);
-    room.players.push(socket.id);
-    socket.roomId = room.id;
-
-    if (room.players.length === 1) {
-      // 一人目: 待機（locked はまだ false）
-      socket.emit('waitingOpponent');
-      emitRooms();
-    } else if (room.players.length === 2) {
-      // 二人目: 試合開始 → locked = true
-      room.locked = true;
-      startNewGame(room, /*randomize*/ true);
-      emitRooms();
-    }
-  });
-
-  // プレイ（手を打つ）
-  socket.on('play', ({ x, y }) => {
-    const room = getMyRoom(socket);
-    if (!room) return;
-    const game = games.get(room.id);
-    if (!game || !game.inProgress) return;
-
-    const myColor = game.colorMap[socket.id];
-    if (!myColor) return;
-    if (game.turn !== myColor) return; // 手番違い
-
-    const n = game.board.length;
-    if (x < 0 || y < 0 || x >= n || y >= n) return;
-    if (game.board[y][x] !== null) return;
-
-    // 置く
-    game.board[y][x] = myColor;
-
-    // 皆に正規化された手を通知
-    const nextTurn = myColor === 'black' ? 'white' : 'black';
-    io.to(roomChannel(room.id)).emit('move', { x, y, color: myColor, nextTurn });
-
-    // 勝敗判定
-    if (checkWin(game.board, x, y, myColor)) {
-      game.inProgress = false;
-      io.to(roomChannel(room.id)).emit('gameOver', { winnerColor: myColor, reason: 'five-in-a-row' });
-      game.rematch = new Set(); // 次の再戦票は空から
-      return;
-    }
-
-    // 引き分け判定
-    if (isFull(game.board)) {
-      game.inProgress = false;
-      io.to(roomChannel(room.id)).emit('gameOver', { winnerColor: null, reason: 'draw' });
-      game.rematch = new Set();
-      return;
-    }
-
-    // 継続
-    game.turn = nextTurn;
-  });
-
-  // 再戦リクエスト（両者が押したら新規対局／先後ランダム）
-  socket.on('rematchRequest', () => {
-    const room = getMyRoom(socket);
-    if (!room) return;
-    const game = games.get(room.id);
-    if (!game || game.inProgress !== false) return; // 対局終了時のみ
-
-    if (!game.rematch) game.rematch = new Set();
-    game.rematch.add(socket.id);
-
-    const both = room.players.length === 2 &&
-                 room.players.every(pid => game.rematch.has(pid));
-    if (both) {
-      startNewGame(room, /*randomize*/ true);
-      emitRooms();
-    } else {
-      // 片方待ち
-      const other = room.players.find(p => p !== socket.id);
-      if (other) io.to(other).emit('opponentRematchWaiting');
-    }
-  });
-
-  // 自分が「退出」：UI を閉じるだけ（部屋は playing 維持）
-  socket.on('exitGame', () => {
-    const room = getMyRoom(socket);
-    if (!room) return;
-
-    const other = room.players.find(p => p !== socket.id);
-    if (other) io.to(other).emit('opponentLeft');
-
-    emitRooms();
-  });
-
-  // 「ルーム選択に戻る」：実際に部屋人数を減らす（2→1 でも playing 維持、1→0 で空き）
-  socket.on('returnToLobby', () => {
-    const room = getMyRoom(socket);
-    if (!room) return;
-
-    room.players = room.players.filter(p => p !== socket.id);
-    socket.roomId = null;
-
-    if (room.players.length === 0) {
-      // 完全に空に戻ったらロック解除＆ゲーム破棄
-      room.locked = false;
-      games.delete(room.id);
-    }
-    emitRooms();
-  });
-
-  // 切断：人数を減らす。2→1 は playing、1→0 は空き。
-  socket.on('disconnect', () => {
-    const room = getMyRoom(socket);
-    if (!room) return;
-
-    room.players = room.players.filter(p => p !== socket.id);
-    const other = room.players[0];
-    if (other) io.to(other).emit('opponentLeft');
-
-    if (room.players.length === 0) {
-      room.locked = false;
-      games.delete(room.id);
-    }
-    emitRooms();
-  });
-
-  // --- ユーティリティ ---
-  function startNewGame(room, randomize) {
-    const [a, b] = room.players;
-    if (!a || !b) return;
-
-    // 盤面初期化
-    const board = Array.from({ length: 15 }, () => Array(15).fill(null));
-
-    // 先後割り当て
-    const firstIsA = randomize ? (Math.random() < 0.5) : true;
-    const colorMap = {};
-    if (firstIsA) {
-      colorMap[a] = 'black';
-      colorMap[b] = 'white';
-    } else {
-      colorMap[a] = 'white';
-      colorMap[b] = 'black';
-    }
-
-    const game = {
-      board,
-      colorMap,
-      turn: 'black',     // 常に黒手番から
-      inProgress: true,
-      rematch: new Set()
-    };
-    games.set(room.id, game);
-
-    // ソケットを部屋に入れる（ルームチャンネル）
-    io.sockets.sockets.get(a)?.join(roomChannel(room.id));
-    io.sockets.sockets.get(b)?.join(roomChannel(room.id));
-
-    // 両者へ開始通知（yourTurn / yourColor を渡す）
-    io.to(a).emit('startGame', { yourTurn: colorMap[a] === 'black', yourColor: colorMap[a] });
-    io.to(b).emit('startGame', { yourTurn: colorMap[b] === 'black', yourColor: colorMap[b] });
-  }
-
-  function getMyRoom(s) {
-    const id = s.roomId;
-    if (!id) return null;
-    return rooms.find(r => r.id === id) || null;
-  }
-
-  function emitRooms() {
-    // 表示ルール：
-    // 0人 → empty
-    // 1人＆!locked → waiting（最初の待機のみ）
-    // それ以外（locked かつ 2→1 を含む）→ playing
-    const payload = rooms.map(r => ({
-      id: r.id,
-      state:
-        r.players.length === 0
-          ? 'empty'
-          : (!r.locked && r.players.length === 1 ? 'waiting' : 'playing')
-    }));
-    io.emit('updateRooms', payload);
-  }
-
-  function roomChannel(roomId) {
-    return `room-${roomId}`;
-  }
-});
-
-// ------ 勝敗判定ユーティリティ ------
-function checkWin(board, x, y, color) {
-  const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-  const n = board.length;
-  for (const [dx, dy] of dirs) {
-    let count = 1;
-    for (let s = 1; s < 5; s++) {
-      const nx = x + dx * s, ny = y + dy * s;
-      if (nx < 0 || ny < 0 || nx >= n || ny >= n) break;
-      if (board[ny][nx] === color) count++; else break;
-    }
-    for (let s = 1; s < 5; s++) {
-      const nx = x - dx * s, ny = y - dy * s;
-      if (nx < 0 || ny < 0 || nx >= n || ny >= n) break;
-      if (board[ny][nx] === color) count++; else break;
-    }
-    if (count >= 5) return true;
-  }
-  return false;
+// 地面
+{
+  const ground = new CANNON.Body({ type: CANNON.Body.STATIC });
+  ground.addShape(new CANNON.Box(new CANNON.Vec3(FIELD_W / 2, 0.5, FIELD_L / 2)));
+  ground.position.set(0, -0.5, 0);
+  world.addBody(ground);
 }
 
-function isFull(board) {
-  return board.every(row => row.every(c => c !== null));
+// 壁4枚
+function addWall(x, y, z, sx, sy, sz) {
+  const wall = new CANNON.Body({ type: CANNON.Body.STATIC });
+  wall.addShape(new CANNON.Box(new CANNON.Vec3(sx / 2, sy / 2, sz / 2)));
+  wall.position.set(x, y, z);
+  world.addBody(wall);
+}
+addWall(0, WALL_H / 2, -FIELD_L / 2, FIELD_W, WALL_H, 1);
+addWall(0, WALL_H / 2, FIELD_L / 2, FIELD_W, WALL_H, 1);
+addWall(-FIELD_W / 2, WALL_H / 2, 0, 1, WALL_H, FIELD_L);
+addWall(FIELD_W / 2, WALL_H / 2, 0, 1, WALL_H, FIELD_L);
+
+// ボール
+const BALL_R = 1.2;
+const ballBody = new CANNON.Body({
+  mass: 3,
+  shape: new CANNON.Sphere(BALL_R),
+  angularDamping: 0.05,
+  linearDamping: 0.01,
+});
+world.addBody(ballBody);
+
+function resetBall() {
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  ballBody.position.set(0, 2, 0);
+}
+resetBall();
+
+// =======================
+// プレイヤー情報
+// =======================
+const ROOM = "match-1";
+const players = new Map(); // socket.id -> {x,y,z,qy,team}
+
+// ゴール位置
+const GOAL_W = 14, GOAL_H = 5, GOAL_D = 2;
+const goalBlue = { min: { x: -GOAL_W / 2, y: 0, z: -FIELD_L / 2 - 0.5 }, max: { x: GOAL_W / 2, y: GOAL_H, z: -FIELD_L / 2 + GOAL_D } };
+const goalOrange = { min: { x: -GOAL_W / 2, y: 0, z: FIELD_L / 2 - GOAL_D }, max: { x: GOAL_W / 2, y: GOAL_H, z: FIELD_L / 2 + 0.5 } };
+
+let blueScore = 0, orangeScore = 0;
+
+// =======================
+// Socket.IO 通信
+// =======================
+io.on("connection", (socket) => {
+  // チーム自動振り分け
+  const blueCount = Array.from(players.values()).filter(p => p.team === "blue").length;
+  const orangeCount = Array.from(players.values()).filter(p => p.team === "orange").length;
+  const team = blueCount <= orangeCount ? "blue" : "orange";
+
+  players.set(socket.id, { x: 0, y: 1.2, z: team === "blue" ? 12 : -12, qy: 0, team });
+  socket.join(ROOM);
+
+  // 初期データ送信
+  socket.emit("hello", {
+    id: socket.id,
+    team,
+    scores: { blue: blueScore, orange: orangeScore },
+    ball: { p: ballBody.position, v: ballBody.velocity },
+  });
+
+  io.to(ROOM).emit("players", Object.fromEntries(players));
+
+  // クライアントから自分の位置を受け取る
+  socket.on("pose", (data) => {
+    const p = players.get(socket.id);
+    if (!p) return;
+    p.x = data.x; p.y = data.y; p.z = data.z; p.qy = data.qy;
+  });
+
+  socket.on("disconnect", () => {
+    players.delete(socket.id);
+    io.to(ROOM).emit("players", Object.fromEntries(players));
+  });
+});
+
+// =======================
+// 車とボールの当たり処理（簡易）
+// =======================
+const CAR_SIZE = { x: 2.2, y: 1.0, z: 3.2 };
+
+function applyCarBallCollisions() {
+  const bp = ballBody.position;
+  for (const p of players.values()) {
+    const min = { x: p.x - CAR_SIZE.x / 2, y: p.y - CAR_SIZE.y / 2, z: p.z - CAR_SIZE.z / 2 };
+    const max = { x: p.x + CAR_SIZE.x / 2, y: p.y + CAR_SIZE.y / 2, z: p.z + CAR_SIZE.z / 2 };
+    const closestX = Math.max(min.x, Math.min(bp.x, max.x));
+    const closestY = Math.max(min.y, Math.min(bp.y, max.y));
+    const closestZ = Math.max(min.z, Math.min(bp.z, max.z));
+    const dx = bp.x - closestX, dy = bp.y - closestY, dz = bp.z - closestZ;
+    const dist2 = dx * dx + dy * dy + dz * dz;
+    if (dist2 < BALL_R * BALL_R) {
+      const len = Math.max(Math.sqrt(dist2), 0.001);
+      const nx = dx / len, ny = dy / len, nz = dz / len;
+      const strength = 30;
+      ballBody.velocity.x += nx * strength;
+      ballBody.velocity.y += ny * strength * 0.6;
+      ballBody.velocity.z += nz * strength;
+    }
+  }
 }
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// ゴール判定
+function inAABB(p, box) {
+  return (
+    p.x >= box.min.x && p.x <= box.max.x &&
+    p.y >= box.min.y && p.y <= box.max.y &&
+    p.z >= box.min.z && p.z <= box.max.z
+  );
+}
+
+// =======================
+// メインループ（20Hzブロードキャスト）
+// =======================
+const FIXED_DT = 1 / 60;
+let last = Date.now(), acc = 0;
+
+setInterval(() => {
+  const now = Date.now();
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  acc += dt;
+
+  while (acc >= FIXED_DT) {
+    applyCarBallCollisions();
+    world.step(FIXED_DT);
+
+    const bp = ballBody.position;
+    if (inAABB(bp, goalBlue)) { orangeScore++; resetBall(); io.to(ROOM).emit("score", { blue: blueScore, orange: orangeScore }); }
+    if (inAABB(bp, goalOrange)) { blueScore++; resetBall(); io.to(ROOM).emit("score", { blue: blueScore, orange: orangeScore }); }
+
+    acc -= FIXED_DT;
+  }
+
+  // 20Hz更新送信
+  io.to
